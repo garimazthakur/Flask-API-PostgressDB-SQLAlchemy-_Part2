@@ -13,5 +13,5 @@ secrets.token_hex(16)
 
 output: You will get the SECRET KEY
 
-main.py is created using token, where as dummy.py is just for understanding, without token
-model.py has our model
+- main.py is created using token, where as dummy.py is just for understanding, without token
+- model.py has our model
