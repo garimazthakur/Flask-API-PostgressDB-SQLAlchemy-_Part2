@@ -1,22 +1,22 @@
+#https://flaskage.readthedocs.io/en/latest/database_queries.html
 import email
 from lib2to3.pgen2 import token
 import os
 import bcrypt
 import urllib.request
 from click import password_option
-from itsdangerous import json
-from numpy import double
+import math, random
 import psycopg2
 import jwt
 import json
 from functools import wraps
 from flask import Flask, jsonify, redirect, request, make_response
 from werkzeug.utils import secure_filename
-from numpy import double
 import uuid   
 from werkzeug.security import generate_password_hash, check_password_hash
 import datetime
-from app import db, SECRET_KEY,Users, app
+from model import db, SECRET_KEY,Users, app
+
 
 def token_required(f): # Special function for creating a custom decorator with the code required to create and validate tokens.
     @wraps(f)
@@ -31,15 +31,22 @@ def token_required(f): # Special function for creating a custom decorator with t
         return f(*args, **kwargs)
     return decorator
 
+
+def get_otp():
+    return random.randint(1000,9999)
+    
+
 @app.route('/signup', methods = ['POST'])
 def signup():
     body = request.get_json()
     print(body)
     print(body["dob"])
+    otp=get_otp()
     hashed_password = generate_password_hash(body['password'], method='sha256')
-    new_user = Users(public_id=str(uuid.uuid4()), first_name=body['first_name'], last_name=body['last_name'], email=body['email'], dob=body['dob'], password=hashed_password, is_active = False)
+    new_user = Users(public_id=str(uuid.uuid4()), first_name=body['first_name'], last_name=body['last_name'], email=body['email'], dob=body['dob'], password=hashed_password, otp=otp, is_active = False)
     db.session.add(new_user)
-    db.session.commit()            
+    db.session.commit()     
+    return jsonify({"message":"The new user added"})  
 
 
 @app.route('/login', methods= ['POST'])
@@ -55,13 +62,15 @@ def login_user():
             # print(user.public_id)
             token = jwt.encode({'id':str(user.public_id), 'exp': datetime.datetime.utcnow() + datetime.timedelta(minutes = 3600)}, SECRET_KEY, algorithm = 'HS256')
             # print(token)
-            return jsonify({"token":token}) 
+            return jsonify({"token":str(token)}) 
     return jsonify({"message": "Login Required"})
+
 
 def getID(token):
     decoded_token = jwt.decode(token, SECRET_KEY, algorithms = 'HS256')
     # print(">>>>>>>>>>> {}".format(type(decoded_token)))
     return decoded_token
+
 
 @app.route('/password', methods = ['POST'])
 @token_required
@@ -70,7 +79,6 @@ def reset_password():
     user = Users.query.filter_by(public_id=id['id']).first()
     print(user)
     # print(user.password.encode("utf-8"))
-    print("^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^")
     body = request.json
     old_password = body["old_password"]
     new_password = body["new_password"]
@@ -89,7 +97,9 @@ def reset_password():
         else:
             print("does not match")    
     db.session.commit()
+    return jsonify({"message": "Your password is reset"})
    
+
 #forgot password   -- 1. generate otp; 2. verify_otp; 3. forgot password
 @app.route('/generate_otp', methods = ['POST'])
 def generate_otp():
@@ -97,8 +107,9 @@ def generate_otp():
     # user =  Users.query.filter_by(public_id=id['id']).first()
     body = request.json
     email = body["email"]
-    user = Users.query.filter_by(email=email).first()
-    otp = "12345"
+    user = Users.query.filter_by(email=email).first()    
+    print(user)
+    otp = get_otp()
     if user:
         user.otp=otp
         db.session.commit()
@@ -106,37 +117,41 @@ def generate_otp():
     else:
         return jsonify({"message" : "Email is not valid. Please enter the correct email address"})
     
+
 @app.route("/verify_otp", methods = ["POST"])
-@token_required
 def verify_otp():
     body = request.json
     email = body["email"]
     otp = body["otp"]
     # user = Users.query.filter_by(email = email).first()
-    id = getID(request.headers.get('authorization'))
-    user =  Users.query.filter_by(public_id=id['id']).first()
+    # id = getID(request.headers.get('authorization'))
+    # print(id)
+    user =  Users.query.filter_by(email=email).first()
+    print('------------------------------>>> !!!!!!!!!!!!!!!!')
     print(user.otp)
+    print(otp)
     if user:
         if user.otp == otp and user.email == email:
             return jsonify({"mesage": "The otp is verified"})
         elif user.email!=email:
             return jsonify({"message": "Email is not verified."})
-        elif user.otp !=otp and user.email ==email:
+        elif user.otp !=otp and user.email == email:
             return jsonify({"message": "Wrong OTP. Please enter agian!"})
         db.session.commit()   
     else:
         return({"message": " The user does not exist"})
 
 @app.route('/forgot_password', methods = ['POST'])
-@token_required
+# @token_required   #no token is required
 def forgot_password():
     body = request.json
     email = body["email"]
     otp = body["otp"]
     new_password = body["new_password"]
     confirm_password = body["confirm_password"]
-    id = getID(request.headers.get('authorization'))
-    user =  Users.query.filter_by(public_id=id['id']).first()
+    user= Users.query.filter_by(email=email).first()
+    # id = getID(request.headers.get('authorization'))
+    # user =  Users.query.filter_by(public_id=id['id']).first()
     if user:
         if user.email == email and user.otp == otp:
             if new_password == confirm_password:
@@ -147,7 +162,7 @@ def forgot_password():
                 print("does not match")
                 return({"message": "password not match"})    
             db.session.commit()
-            return jsonify({"password": "Update"})
+            return jsonify({"password": "Your passsword has been updated"})
         elif user.email == email and user.otp !=otp:
             return jsonify({"message" : "OPT is not valid. Please enter the correct OTP"})
     else:
@@ -156,7 +171,7 @@ def forgot_password():
 @app.route('/profile', methods = ['GET', 'PUT', 'DELETE', 'PATCH'])
 @token_required
 def get_one_user():
-    id = getID(request.headers.get('authorization'))
+    id = getID(request.headers.get('authorization'))   #this is for tokenization
     user = Users.query.filter_by(public_id=id['id']).first()
     if request.method=="GET":
         if not user:
@@ -223,24 +238,6 @@ def get_one_user():
         return jsonify({'message' : 'The field has been updated!'})
     
 
- #For simple login without token
-        
-# @app.route('/login', methods= ['POST'])    
-# def login():
-#     info = json.loads(request.data)
-#     password = info['password']
-#     email = info['email']
-#     user = Users.query.filter_by(email=email).first()
-#     if user:
-#         if user.check_password(password):
-#             user = user.serialize()
-#             return jsonify(user)
-#         else:
-#             return jsonify({"status": 401, 
-#                         "reason": "Wrong Password"})
-#     else:
-#         return jsonify({"status": 401, 
-#                         "reason": "Email or Password Error"})
 if __name__ == "__main__":
     app.run(port=8000, debug=True)
 
